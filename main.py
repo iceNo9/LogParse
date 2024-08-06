@@ -23,8 +23,8 @@ else:
 work_dir = Path(executable_path).parent.resolve()
 
 # 读取当前路径下config.json文件
-config_file_path = work_dir / 'config.json'
-name_file_path = work_dir / 'name.json'
+config_file_path = work_dir / 'config.csv'
+name_file_path = work_dir / 'name.csv'
 log_folder_path = work_dir / 'log'
 
 
@@ -187,10 +187,10 @@ def write_commands_to_file(rv_commands, output_file_path):
 
 
 
-def process_input(input_path: str, out_subfolder=""):
+def process_input(input_path: str, rv_keys_dict, rv_names_dict, out_subfolder=""):
     if os.path.isfile(input_path):  # 判断输入路径是否为文件
         if input_path.endswith(('.txt', '.log')):  # 判断是否为文本文件或日志文件
-            at_commands = parse_commands(read_file_lines(input_path), keys_dict)
+            at_commands = parse_commands(read_file_lines(input_path), rv_keys_dict)
 
             # 创建output子目录（如果需要的话）
             output_root = os.path.join(os.path.dirname(input_path), out_subfolder)
@@ -198,7 +198,7 @@ def process_input(input_path: str, out_subfolder=""):
 
             base_filename = os.path.splitext(os.path.basename(input_path))[0]
             output_file = os.path.join(output_root, f"{base_filename}_parse.csv")
-            write_commands_to_csv(at_commands, output_file, names_dict)
+            write_commands_to_csv(at_commands, output_file, rv_names_dict)
         else:
             popup_error(f"输入的不是文本文件：{input_path}, 目前仅支持.txt或.log")
     elif os.path.isdir(input_path):  # 判断输入路径是否为目录
@@ -206,7 +206,7 @@ def process_input(input_path: str, out_subfolder=""):
             for file in files:
                 if file.endswith('.log'):  # 遍历目录及子目录下的文本文件或日志文件
                     txt_file_path = os.path.join(root, file)
-                    at_commands = parse_commands(read_file_lines(txt_file_path), keys_dict)
+                    at_commands = parse_commands(read_file_lines(txt_file_path), rv_keys_dict)
 
                     # 创建output子目录（如果需要的话）
                     output_root = os.path.join(root, out_subfolder)
@@ -214,7 +214,7 @@ def process_input(input_path: str, out_subfolder=""):
 
                     base_filename = os.path.splitext(file)[0]
                     output_file = os.path.join(output_root, f"parse_{base_filename}.csv")
-                    write_commands_to_csv(at_commands, output_file, names_dict)
+                    write_commands_to_csv(at_commands, output_file, rv_names_dict)
     else:
         popup_error(f"输入的既不是文件也不是目录：{input_path}")
 
@@ -236,40 +236,7 @@ def popup_error(message: str):
 #     lines = file.readlines()
 
 
-# 初始化json文件内容
-default_config_data = {
-    "matchkey": [
-        "0x52",
-        "0x65",
-        "0x66",
-        "0x67",
-        "0x68",
-        "0x69",
-        "0x70",
-        "0x71",
-        "0x72",
-        "0x82"
-    ],
-    "changematchkey": [
-        "0x01",
-        "0x02",
-        "0x03",
-        "0x0D",
-        "0x0E",
-        "0x0F",
-        "0x13",
-        "0x14",
-        "0x1B",
-        "0x1C",
-        "0x20",
-        "0x21",
-        "0x23",
-        "0x30",
-        "0x31",
-        "0x32",
-        "0x33"
-    ]
-}
+
 
 default_name_data = {
     "0x01": "查询引擎基本状态",
@@ -395,27 +362,140 @@ default_name_data = {
     "0xE6": "查询碳粉消耗检测实施结果"
 }
 
+def load_name_csv_to_json(rv_path):
+    # 默认数据
+    default_data = {
+        "指令": ["0x01"],
+        "解释": ["查询引擎基本状态"]
+    }
+
+    # 如果文件不存在，则创建
+    if not os.path.exists(rv_path):
+        df = pd.DataFrame(default_data)
+        df.to_csv(rv_path, index=False)  # 使用 csv 文件格式
+
+    # 读取文件
+    df = pd.read_csv(rv_path)
+
+    # 转换为字典
+    data_dict = df.set_index('指令')['解释'].to_dict()
+
+    return data_dict
+
+def load_config_csv_to_json(rv_path):
+    # 默认数据
+    default_data = {
+        'matchkey': ['51', '52', '65', '82'],
+        'changematchkey': ['01', '30', '31', '32']
+    }
+
+    # 如果文件不存在，则创建
+    if not os.path.exists(rv_path):
+        df = pd.DataFrame(default_data)
+        df.to_csv(rv_path, index=False)  # 使用 csv 文件格式
+
+    # 读取文件
+    df = pd.read_csv(rv_path)
+
+    # 处理缺失值
+    df['matchkey'] = '0x' + df['matchkey'].fillna('').astype(str)
+    df['changematchkey'] = '0x' + df['changematchkey'].fillna('').astype(str)
+
+    # 格式化数字，确保单个数字前面带0
+    df['matchkey'] = df['matchkey'].apply(lambda x: x if len(x[2:]) > 1 else x[:2] + '0' + x[2:])
+    df['changematchkey'] = df['changematchkey'].apply(lambda x: x if len(x[2:]) > 1 else x[:2] + '0' + x[2:])
+
+    # 转换为字典
+    data_dict = {
+        "matchkey": df['matchkey'].tolist(),
+        "changematchkey": df['changematchkey'].tolist()
+    }
+
+    return data_dict
+
+
+def json_to_name_csv(rv_dict, output_path):
+    # 将 JSON 转换为 DataFrame
+    df = pd.DataFrame(list(rv_dict.items()), columns=['指令', '解释'])
+
+    # 将 DataFrame 保存为 CSV 文件
+    df.to_csv(output_path, index=False)
+
+def load_config_xlsx_to_json(rv_path):
+    # 默认数据
+    default_data = {
+        'matchkey': ['51', '52', '65', '82'],
+        'changematchkey': ['01', '30', '31', '32']
+    }
+
+    # 如果文件不存在，则创建
+    if not os.path.exists(rv_path):
+        df = pd.DataFrame(default_data)
+        df.to_excel(rv_path, index=False, engine='openpyxl')  # 指定使用openpyxl作为引擎
+
+    # 读取文件
+    df = pd.read_excel(rv_path, engine='openpyxl')  # 指定使用openpyxl作为引擎
+
+    # 处理缺失值
+    df['matchkey'] = '0x' + df['matchkey'].fillna('').astype(str)
+    df['changematchkey'] = '0x' + df['changematchkey'].fillna('').astype(str)
+
+    # 格式化数字，确保单个数字前面带0
+    df['changematchkey'] = df['changematchkey'].apply(lambda x: x if len(x[2:]) > 1 else x[:2] + '0' + x[2:])
+
+    # 转换为字典
+    data_dict = {
+        "matchkey": df['matchkey'].tolist(),
+        "changematchkey": df['changematchkey'].tolist()
+    }
+
+    # 输出JSON
+    # json_data = json.dumps(data_dict, indent=4)
+    # print(json_data)
+
+    return data_dict
+
+def load_name_xlsx_to_json(rv_path):
+    # 默认数据
+    default_data = {
+        "指令": ["0x01"],
+        "解释": ["查询引擎基本状态"]
+    }
+
+    # 如果文件不存在，则创建
+    if not os.path.exists(rv_path):
+        df = pd.DataFrame(default_data)
+        df.to_excel(rv_path, index=False, engine='openpyxl')
+
+    # 读取文件
+    df = pd.read_excel(rv_path, engine='openpyxl')
+
+    # 转换为字典
+    data_dict = df.set_index('指令')['解释'].to_dict()
+
+    # 输出JSON
+    # json_data = json.dumps(data_dict, indent=4)
+    # print(json_data)
+
+    return data_dict
+    
+def json_to_name_xlsx(rv_dict):
+    # 将 JSON 转换为 DataFrame
+    df = pd.DataFrame(list(rv_dict.items()), columns=['指令', '解释'])
+    
+
 if __name__ == "__main__":
     # 检查并创建/写入config.json文件
-    if not os.path.exists(config_file_path):
-        with open(config_file_path, 'w', encoding='utf-8') as config_file:
-            json.dump(default_config_data, config_file, ensure_ascii=False, indent=4)
-    # 检查并创建/写入name.json文件
-    if not os.path.exists(name_file_path):
-        with open(name_file_path, 'w', encoding='utf-8') as name_file:
-            json.dump(default_name_data, name_file, ensure_ascii=False, indent=4)
+    keys_dict = load_config_csv_to_json(config_file_path)
 
-    # 读取JSON数据
-    with open(config_file_path, 'r') as config_file:
-        keys_dict = json.load(config_file)
-    with open(name_file_path, 'r', encoding='utf-8') as name_file:
-        names_dict = json.load(name_file)
+    # 检查并创建/写入name.json文件,读取
+    names_dict = load_name_csv_to_json(name_file_path)
 
     default_command = CommandData(head="", send=[], return_values=[])
     repeat_commands = [default_command.copy() for _ in range(256)]
 
     if len(sys.argv) > 1:
-        process_input(sys.argv[1])
+        process_input(sys.argv[1], keys_dict, names_dict)
 
 # commands = parse_commands(lines, keys_dict)
 # write_commands_to_file(commands, "out.csv")
