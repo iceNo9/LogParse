@@ -3,11 +3,30 @@ import os
 import re
 import csv
 import sys
+import logging
 from enum import Enum, auto
 from typing import List
 import tkinter as tk
 from tkinter import messagebox
 from pathlib import Path
+from datetime import datetime
+import pandas as pd
+
+# 获取程序运行时的工作目录
+if getattr(sys, 'frozen', False):  # 检查是否为打包环境
+    executable_path = sys.executable
+else:
+    # 非打包环境，获取当前脚本的路径
+    executable_path = __file__
+
+# 获取可执行文件所在的目录
+work_dir = Path(executable_path).parent.resolve()
+
+# 读取当前路径下config.json文件
+config_file_path = work_dir / 'config.json'
+name_file_path = work_dir / 'name.json'
+log_folder_path = work_dir / 'log'
+
 
 class CommandType(Enum):
     Invalid = auto()
@@ -28,6 +47,30 @@ class CommandData:
 
     def copy(self):
         return CommandData(self.head, self.send.copy(), self.return_values.copy())
+
+
+# 获取当前日期，格式化为 'yyyymmdd' 格式
+current_date = datetime.now().strftime("%Y%m%d")
+log_file_path = os.path.join(log_folder_path, f"{current_date}.log")
+
+# 确保 log 文件夹存在，若不存在则创建
+if not os.path.exists(log_folder_path):
+    os.mkdir(log_folder_path)
+
+# 设置日志记录器
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # 设置日志级别，可根据需要调整
+
+# 创建一个文件处理器，指定日志文件路径和模式（追加模式 'a'）
+file_handler = logging.FileHandler(log_file_path, mode='a')
+file_handler.setLevel(logging.DEBUG)  # 文件处理器的日志级别与记录器相同
+
+# 定义日志输出格式
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
+# 将文件处理器添加到日志记录器
+logger.addHandler(file_handler)
 
 
 def create_command(head: str):
@@ -72,21 +115,29 @@ def parse_commands(rv_data_lines, rv_keys_dict):
     current_main_command = None
 
     for line in rv_data_lines:
-        command_type, hex_match = judge_command(line)
+        try:
+            command_type, hex_match = judge_command(line)
 
-        if hex_match is not None:
-            hex_send, hex_return = hex_match.group().split('->')
-            hex_send_value = hex_send[1:-1]  # Remove the outer brackets
-            hex_return_value = hex_return[1:-1]  # Remove the outer brackets
+            if hex_match is not None:
+                hex_send, hex_return = hex_match.group().split('->')
+                hex_send_value = hex_send[1:-1]  # Remove the outer brackets
+                hex_return_value = hex_return[1:-1]  # Remove the outer brackets
 
-            if command_type == CommandType.Main:
-                if current_main_command is not None:
-                    judge_commands(current_main_command, rv_keys_dict, at_commands)
-                current_main_command = CommandData(head=hex_send_value, send=[hex_send_value],
-                                                   return_values=[hex_return_value])
-            elif command_type == CommandType.Sub:
-                current_main_command.send.append(hex_send_value)
-                current_main_command.return_values.append(hex_return_value)
+                if command_type == CommandType.Main:
+                    if current_main_command is not None:
+                        judge_commands(current_main_command, rv_keys_dict, at_commands)
+                    current_main_command = CommandData(head=hex_send_value, send=[hex_send_value],
+                                                       return_values=[hex_return_value])
+                elif command_type == CommandType.Sub:
+                    print(line)
+                    current_main_command.send.append(hex_send_value)
+                    current_main_command.return_values.append(hex_return_value)
+
+        except Exception as e:
+            logger.critical(f"发生错误:{e.__class__.__name__}: {str(e)}")
+            logger.critical(f"错误源日志:{line}")
+            popup_error(f"发生错误，已保存到日志{log_file_path}")
+            sys.exit()
 
     if current_main_command is not None:
         judge_commands(current_main_command, rv_keys_dict, at_commands)
@@ -109,10 +160,10 @@ def write_commands_to_csv(rv_commands, rv_path, rv_name_dict):
                 chinese_name = "该值不存在或者为空，请修改"
 
             # 构建Hex_Format行
-            hex_format_line = f"CMD:[{command.send[0]}]->[{command.return_values[0]}]\n"
+            hex_format_line = f"CMD:[{command.send[0]}]->[{command.return_values[0]}]"
             sub_hex_format_lines = []
             for i in range(1, min(len(command.send), len(command.return_values))):
-                sub_hex_format_lines.append(f"   :[{command.send[i]}]->[{command.return_values[i]}]\n")
+                sub_hex_format_lines.append(f"\n   :[{command.send[i]}]->[{command.return_values[i]}]")
 
             # 将子命令行连接起来
             hex_format_content = hex_format_line + ''.join(sub_hex_format_lines).rstrip('\n')
@@ -120,6 +171,8 @@ def write_commands_to_csv(rv_commands, rv_path, rv_name_dict):
             # 写入CSV行
             writer.writerow([chinese_name, command.head, ','.join(command.send), ','.join(command.return_values),
                              hex_format_content])
+
+    popup_error(f"操作完成")
 
 
 def write_commands_to_file(rv_commands, output_file_path):
@@ -130,6 +183,8 @@ def write_commands_to_file(rv_commands, output_file_path):
 
                 for i in range(1, min(len(command.send), len(command.return_values))):
                     output_file.write(f"   :[{command.send[i]}]->[{command.return_values[i]}]\n")
+
+
 
 
 def process_input(input_path: str, out_subfolder=""):
@@ -180,19 +235,6 @@ def popup_error(message: str):
 # with open("test.log", "r") as file:
 #     lines = file.readlines()
 
-# 获取程序运行时的工作目录
-if getattr(sys, 'frozen', False):  # 检查是否为打包环境
-    executable_path = sys.executable
-else:
-    # 非打包环境，获取当前脚本的路径
-    executable_path = __file__
-
-# 获取可执行文件所在的目录
-work_dir = Path(executable_path).parent.resolve()
-
-# 读取当前路径下config.json文件
-config_file_path = work_dir / 'config.json'
-name_file_path = work_dir / 'name.json'
 
 # 初始化json文件内容
 default_config_data = {
