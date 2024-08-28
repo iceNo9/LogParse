@@ -11,6 +11,7 @@ from tkinter import messagebox
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
+import chardet
 
 # 获取程序运行时的工作目录
 if getattr(sys, 'frozen', False):  # 检查是否为打包环境
@@ -362,7 +363,40 @@ default_name_data = {
     "0xE6": "查询碳粉消耗检测实施结果"
 }
 
+def detect_encoding(file_path):
+    """检测文件的编码格式"""
+    with open(file_path, 'rb') as f:
+        result = chardet.detect(f.read())
+    return result['encoding']
+
 def load_name_csv_to_json(rv_path):
+    # 默认数据
+    default_data = {
+        "指令": ["0x01"],
+        "解释": ["查询引擎基本状态"]
+    }
+
+    # 如果文件不存在，则创建
+    if not os.path.exists(rv_path):
+        df = pd.DataFrame(default_data)
+        df.to_csv(rv_path, index=False)  # 使用 csv 文件格式
+
+    # 读取文件前检测文件编码
+    encoding = detect_encoding(rv_path)
+
+    # 读取文件
+    try:
+        df = pd.read_csv(rv_path, encoding=encoding)
+    except UnicodeDecodeError:
+        print("尝试使用 'latin1' 编码...")
+        df = pd.read_csv(rv_path, encoding='latin1')
+
+    # 转换为字典
+    data_dict = df.set_index('指令')['解释'].to_dict()
+
+    return data_dict
+
+def load_name_csv_to_json_backup(rv_path):
     # 默认数据
     default_data = {
         "指令": ["0x01"],
