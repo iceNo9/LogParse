@@ -67,7 +67,7 @@ file_handler = logging.FileHandler(log_file_path, mode='a')
 file_handler.setLevel(logging.DEBUG)  # 文件处理器的日志级别与记录器相同
 
 # 定义日志输出格式
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s')
 file_handler.setFormatter(formatter)
 
 # 将文件处理器添加到日志记录器
@@ -130,9 +130,13 @@ def parse_commands(rv_data_lines, rv_keys_dict):
                     current_main_command = CommandData(head=hex_send_value, send=[hex_send_value],
                                                        return_values=[hex_return_value])
                 elif command_type == CommandType.Sub:
-                    print(line)
-                    current_main_command.send.append(hex_send_value)
-                    current_main_command.return_values.append(hex_return_value)
+                    if current_main_command is not None:
+                        current_main_command.send.append(hex_send_value)
+                        current_main_command.return_values.append(hex_return_value)
+                    else:
+                        # 处理 `current_main_command` 未初始化的情况
+                        logger.warning("当前主命令未初始化，跳过子命令处理")
+                        logger.critical(f"源日志:{line}")
 
         except Exception as e:
             logger.critical(f"发生错误:{e.__class__.__name__}: {str(e)}")
